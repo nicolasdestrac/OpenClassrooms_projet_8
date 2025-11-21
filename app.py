@@ -1,0 +1,267 @@
+import numpy as np
+import pandas as pd
+import streamlit as st
+
+from src.api_client import (
+    get_schema,
+    predict,
+    explain,
+    check_health,
+)
+from src.data_loader import (
+    load_clients_data,
+    get_client_row,
+    get_client_id_col,
+)
+from src.plots import (
+    plot_client_vs_population,
+    plot_bivariate,
+)
+
+# ---------------------------
+# Config de la page
+# ---------------------------
+st.set_page_config(
+    page_title="Dashboard scoring crédit - Projet 8",
+    layout="wide"
+)
+
+# ---------------------------
+# Helpers
+# ---------------------------
+
+@st.cache_data
+def cached_load_clients_data():
+    return load_clients_data()
+
+@st.cache_data
+def cached_get_schema():
+    try:
+        return get_schema()
+    except Exception:
+        return []
+
+def to_json_serializable(value):
+    """Convertit les types numpy en types Python natifs pour JSON."""
+    if isinstance(value, (np.integer, np.int32, np.int64)):
+        return int(value)
+    if isinstance(value, (np.floating, np.float32, np.float64)):
+        return float(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    return value  # string, None, etc.
+
+def build_features_from_row(row: pd.Series, schema: list[str] | None = None) -> dict:
+    """
+    Construit le dict `features` attendu par l'API à partir d'une ligne de DataFrame.
+    Si un `schema` est fourni, il est utilisé pour garantir l'ordre et gérer les colonnes manquantes.
+    """
+    if schema:
+        features = {}
+        for col in schema:
+            features[col] = to_json_serializable(row[col]) if col in row.index else None
+        return features
+    else:
+        return {col: to_json_serializable(val) for col, val in row.to_dict().items()}
+
+
+# ---------------------------
+# Sidebar : configuration
+# ---------------------------
+st.sidebar.title("Configuration")
+
+# Santé de l'API
+with st.sidebar.expander("Statut de l'API"):
+    try:
+        health = check_health()
+        st.success("✅ API disponible")
+        st.json(health)
+    except Exception as e:
+        st.error("❌ Impossible de joindre l'API")
+        st.caption(str(e))
+
+# Chargement des données clients
+try:
+    df_clients = cached_load_clients_data()
+    client_id_col = get_client_id_col()
+    client_ids = sorted(df_clients[client_id_col].unique().tolist())
+except Exception as e:
+    st.error(f"Erreur au chargement des données clients: {e}")
+    st.stop()
+
+selected_client_id = st.sidebar.selectbox(
+    "Sélectionner un client",
+    options=client_ids
+)
+
+section = st.sidebar.radio(
+    "Section",
+    [
+        "Vue d'ensemble",
+        "Interprétation du score",
+        "Comparaison population",
+        "Analyse bi-variée"
+    ]
+)
+
+st.sidebar.markdown("---")
+st.sidebar.caption(
+    "Ce dashboard a pour objectif d'aider le chargé de relation client "
+    "à expliquer les décisions d'octroi de crédit de manière transparente."
+)
+
+# ---------------------------
+# Récupération des infos client + prédiction
+# ---------------------------
+
+try:
+    client_row = get_client_row(selected_client_id)
+except Exception as e:
+    st.error(f"Erreur lors de la récupération du client: {e}")
+    st.stop()
+
+schema = cached_get_schema()
+features = build_features_from_row(client_row, schema=schema if schema else None)
+
+# Appel API /predict
+try:
+    pred_result = predict(features)
+    proba = float(pred_result.get("probability", 0.0))
+    prediction = int(pred_result.get("prediction", 0))
+    threshold = float(pred_result.get("threshold", 0.5))
+except Exception as e:
+    st.error(f"Erreur lors de l'appel à l'API /predict: {e}")
+    proba = None
+    prediction = None
+    threshold = 0.5
+
+# ---------------------------
+# Section : Vue d'ensemble
+# ---------------------------
+if section == "Vue d'ensemble":
+    st.title("Vue d'ensemble du client")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Décision du modèle")
+        if prediction is not None:
+            decision_label = "ACCORD" if prediction == 0 else "REFUS"
+            st.metric("Décision modèle", decision_label)
+
+        if proba is not None:
+            st.metric("Probabilité de défaut", f"{proba:.1%}")
+            st.progress(min(max(proba, 0.0), 1.0))
+
+    with col2:
+        st.subheader("Distance au seuil de décision")
+        if proba is not None:
+            distance = abs(proba - threshold)
+            st.write(f"Seuil de décision : **{threshold:.0%}**")
+            st.write(f"Distance au seuil : **{distance:.1%}**")
+            if proba >= threshold:
+                st.info(
+                    "Le modèle estime une probabilité de défaut **supérieure** au seuil "
+                    "→ tendance au **refus**."
+                )
+            else:
+                st.info(
+                    "Le modèle estime une probabilité de défaut **inférieure** au seuil "
+                    "→ tendance à **accepter** le crédit."
+                )
+        else:
+            st.warning("Probabilité non disponible. Vérifier l'API.")
+
+    st.markdown("---")
+    st.subheader("Caractéristiques principales du client")
+
+    # Affichage en DataFrame (une seule ligne)
+    st.dataframe(
+        pd.DataFrame(client_row).T,
+        use_container_width=True
+    )
+
+# ---------------------------
+# Section : Interprétation du score (SHAP local)
+# ---------------------------
+elif section == "Interprétation du score":
+    st.title("Interprétation du score (importance locale)")
+
+    try:
+        explain_result = explain(features)
+        base_value = explain_result.get("base_value", None)
+        contrib = explain_result.get("contrib", {})
+    except Exception as e:
+        st.error(f"Erreur lors de l'appel à l'API /explain: {e}")
+        contrib = {}
+        base_value = None
+
+    if contrib:
+        shap_df = (
+            pd.DataFrame.from_dict(contrib, orient="index", columns=["shap_value"])
+            .sort_values("shap_value", key=lambda s: s.abs(), ascending=False)
+        )
+
+        st.markdown("### Top variables qui influencent la décision pour ce client")
+        st.bar_chart(shap_df)
+
+        st.caption(
+            "Les valeurs SHAP (en bleu) indiquent la contribution de chaque variable à "
+            "l'augmentation ou la diminution du risque estimé pour ce client."
+        )
+
+        if base_value is not None:
+            st.caption(f"Valeur de base du modèle (base_value) : `{base_value:.4f}`")
+    else:
+        st.info(
+            "Les contributions SHAP ne sont pas disponibles. "
+            "Vérifiez que l'endpoint `/explain` est fonctionnel sur l'API."
+        )
+
+# ---------------------------
+# Section : Comparaison population
+# ---------------------------
+elif section == "Comparaison population":
+    st.title("Comparaison du client à la population")
+
+    numeric_cols = df_clients.select_dtypes(include="number").columns.tolist()
+
+    if not numeric_cols:
+        st.warning("Aucune variable numérique disponible pour la comparaison.")
+    else:
+        feature = st.selectbox("Choisir une variable à comparer", options=numeric_cols)
+
+        try:
+            fig = plot_client_vs_population(df_clients, client_row, feature)
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Erreur lors de la génération du graphique: {e}")
+
+# ---------------------------
+# Section : Analyse bi-variée
+# ---------------------------
+elif section == "Analyse bi-variée":
+    st.title("Analyse bi-variée")
+
+    numeric_cols = df_clients.select_dtypes(include="number").columns.tolist()
+    if len(numeric_cols) < 2:
+        st.warning("Pas assez de variables numériques pour réaliser une analyse bi-variée.")
+    else:
+        col_x, col_y = st.columns(2)
+        with col_x:
+            feature_x = st.selectbox("Variable X", options=numeric_cols, key="feature_x")
+        with col_y:
+            feature_y = st.selectbox("Variable Y", options=numeric_cols, key="feature_y")
+
+        color_col = st.selectbox(
+            "Coloration par variable (optionnel)",
+            options=["(aucune)"] + numeric_cols,
+            index=0
+        )
+        color_arg = None if color_col == "(aucune)" else color_col
+
+        try:
+            fig = plot_bivariate(df_clients, feature_x, feature_y, color=color_arg)
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Erreur lors de la génération du graphique bi-varié: {e}")

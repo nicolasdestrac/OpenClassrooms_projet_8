@@ -1,10 +1,9 @@
-# src/api_client.py
 import os
 import requests
 
 API_BASE_URL = os.getenv(
     "API_BASE_URL",
-    "https://TON_API_P7_URL.onrender.com"  # <<< À REMPLACER
+    "https://openclassrooms-projet7-scoring-api.onrender.com/"
 )
 
 def _post(endpoint: str, payload: dict) -> dict:
@@ -22,12 +21,12 @@ def _get(endpoint: str) -> dict:
     return resp.json()
 
 # -------------------------------------------------
-# API méthodes
+# Appels dédiés à ton API de scoring
 # -------------------------------------------------
 
 def get_schema() -> list:
     """
-    Récupère les colonnes attendues par le modèle.
+    Récupère les colonnes attendues par le modèle via /schema.
     """
     data = _get("/schema")
     return data.get("input_columns", [])
@@ -62,6 +61,6 @@ def explain(features: dict) -> dict:
 
 def check_health() -> dict:
     """
-    Vérifie que l'API fonctionne.
+    Vérifie que l'API fonctionne via /health.
     """
     return _get("/health")
