@@ -42,27 +42,36 @@ def cached_get_schema():
         return []
 
 def to_json_serializable(value):
-    """Convertit les types numpy en types Python natifs pour JSON."""
+    import math
+
+    # Convertit types numpy en types Python
     if isinstance(value, (np.integer, np.int32, np.int64)):
-        return int(value)
-    if isinstance(value, (np.floating, np.float32, np.float64)):
-        return float(value)
-    if isinstance(value, (np.bool_,)):
-        return bool(value)
-    return value  # string, None, etc.
+        value = int(value)
+    elif isinstance(value, (np.floating, np.float32, np.float64)):
+        value = float(value)
+    elif isinstance(value, (np.bool_,)):
+        value = bool(value)
+
+    # Remplacement des valeurs non JSON-compliant
+    if value is None:
+        return None
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return None  # ou 0, selon ton modèle
+    return value
 
 def build_features_from_row(row: pd.Series, schema: list[str] | None = None) -> dict:
-    """
-    Construit le dict `features` attendu par l'API à partir d'une ligne de DataFrame.
-    Si un `schema` est fourni, il est utilisé pour garantir l'ordre et gérer les colonnes manquantes.
-    """
+    features = {}
+
     if schema:
-        features = {}
         for col in schema:
-            features[col] = to_json_serializable(row[col]) if col in row.index else None
-        return features
+            raw_value = row[col] if col in row.index else None
+            features[col] = to_json_serializable(raw_value)
     else:
-        return {col: to_json_serializable(val) for col, val in row.to_dict().items()}
+        for col, raw_value in row.to_dict().items():
+            features[col] = to_json_serializable(raw_value)
+
+    return features
 
 
 # ---------------------------
