@@ -163,7 +163,7 @@ if section == "Vue d'ensemble":
 
     # --- Carte 2 : Probabilité & niveau de risque ---
     with col2:
-        st.subheader("Niveau de risque")
+        st.subheader("Niveau de risque :")
         if proba is not None:
             proba_pct = proba * 100
 
