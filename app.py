@@ -16,6 +16,7 @@ from src.data_loader import (
 from src.plots import (
     plot_client_vs_population,
     plot_bivariate,
+    make_risk_gauge,
 )
 
 # ---------------------------
@@ -156,14 +157,14 @@ if section == "Vue d'ensemble":
     with col1:
         st.subheader("Décision du modèle")
         if prediction is not None:
-            decision_label = "ACCORD" if prediction == 0 else "REFUS"
+            decision_label = "ACCORDÉ" if prediction == 0 else "REFUSÉ"
             st.metric("Décision modèle", decision_label)
         else:
             st.metric("Décision modèle", "Indisponible")
 
     # --- Carte 2 : Probabilité & niveau de risque ---
     with col2:
-        st.subheader("Niveau de risque :")
+        st.subheader("Niveau de risque")
         if proba is not None:
             proba_pct = proba * 100
 
@@ -180,9 +181,12 @@ if section == "Vue d'ensemble":
             st.metric("Probabilité de défaut", f"{proba_pct:.1f} %")
             st.write(f"Niveau de risque : **{risk_level}**")
             st.caption(risk_expl)
-            st.progress(min(max(proba, 0.0), 1.0))
+
+            gauge_fig = make_risk_gauge(proba)
+            st.plotly_chart(gauge_fig, use_container_width=True)
         else:
             st.write("Probabilité de défaut indisponible.")
+
 
     # --- Carte 3 : Seuil & distance ---
     with col3:
