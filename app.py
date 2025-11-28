@@ -150,41 +150,89 @@ except Exception as e:
 if section == "Vue d'ensemble":
     st.title("Vue d'ensemble du client")
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
+    # --- Carte 1 : Décision du modèle ---
     with col1:
         st.subheader("Décision du modèle")
         if prediction is not None:
             decision_label = "ACCORD" if prediction == 0 else "REFUS"
             st.metric("Décision modèle", decision_label)
+        else:
+            st.metric("Décision modèle", "Indisponible")
 
-        if proba is not None:
-            st.metric("Probabilité de défaut", f"{proba:.1%}")
-            st.progress(min(max(proba, 0.0), 1.0))
-
+    # --- Carte 2 : Probabilité & niveau de risque ---
     with col2:
-        st.subheader("Distance au seuil de décision")
+        st.subheader("Niveau de risque")
+        if proba is not None:
+            proba_pct = proba * 100
+
+            if proba < 0.10:
+                risk_level = "Faible"
+                risk_expl = "Le risque estimé est faible."
+            elif proba < 0.30:
+                risk_level = "Modéré"
+                risk_expl = "Le risque estimé est modéré."
+            else:
+                risk_level = "Élevé"
+                risk_expl = "Le risque estimé est élevé."
+
+            st.metric("Probabilité de défaut", f"{proba_pct:.1f} %")
+            st.write(f"Niveau de risque : **{risk_level}**")
+            st.caption(risk_expl)
+            st.progress(min(max(proba, 0.0), 1.0))
+        else:
+            st.write("Probabilité de défaut indisponible.")
+
+    # --- Carte 3 : Seuil & distance ---
+    with col3:
+        st.subheader("Seuil de décision")
         if proba is not None:
             distance = abs(proba - threshold)
             st.write(f"Seuil de décision : **{threshold:.0%}**")
             st.write(f"Distance au seuil : **{distance:.1%}**")
+
             if proba >= threshold:
                 st.info(
-                    "Le modèle estime une probabilité de défaut **supérieure** au seuil "
-                    "→ tendance au **refus**."
+                    "La probabilité de défaut est **au-dessus** du seuil : "
+                    "le modèle a tendance à **refuser** ce crédit."
                 )
             else:
                 st.info(
-                    "Le modèle estime une probabilité de défaut **inférieure** au seuil "
-                    "→ tendance à **accepter** le crédit."
+                    "La probabilité de défaut est **en-dessous** du seuil : "
+                    "le modèle a tendance à **accepter** ce crédit."
                 )
         else:
-            st.warning("Probabilité non disponible. Vérifier l'API.")
+            st.write("Seuil de décision : **indisponible**")
+
+    st.markdown("---")
+    st.subheader("Résumé à communiquer au client")
+
+    if proba is not None and prediction is not None:
+        decision_label = "accepté" if prediction == 0 else "refusé"
+        seuil_pct = threshold * 100
+        proba_pct = proba * 100
+
+        if proba < 0.10:
+            risk_level = "un risque faible"
+        elif proba < 0.30:
+            risk_level = "un risque modéré"
+        else:
+            risk_level = "un risque élevé"
+
+        st.markdown(
+            f"""
+            > Pour ce client, le modèle estime la probabilité de non-remboursement à **{proba_pct:.1f} %**,
+            > ce qui correspond à **{risk_level}** par rapport aux autres dossiers.
+            > Le seuil de décision est fixé à **{seuil_pct:.0f} %**, le dossier est donc **{decision_label}** par le modèle.
+            """
+        )
+    else:
+        st.caption("Résumé indisponible car la prédiction n'a pas pu être calculée.")
 
     st.markdown("---")
     st.subheader("Caractéristiques principales du client")
 
-    # Affichage en DataFrame (une seule ligne)
     st.dataframe(
         pd.DataFrame(client_row).T,
         use_container_width=True
