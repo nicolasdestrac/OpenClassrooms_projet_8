@@ -1,15 +1,13 @@
 from pathlib import Path
 import pandas as pd
 
-P7_DASHBOARD_DATA = Path(
-    "/home/nicolasd/code/nicolasdestrac/OpenClassrooms/Projet_7/data/raw/dashboard_sample.parquet"
-)
+DATA_PATH = Path("data") / "dashboard_sample.parquet"
 CLIENT_ID_COL = "SK_ID_CURR"
 
 def load_clients_data() -> pd.DataFrame:
-    if not P7_DASHBOARD_DATA.exists():
-        raise FileNotFoundError(f"Fichier introuvable : {P7_DASHBOARD_DATA}")
-    return pd.read_parquet(P7_DASHBOARD_DATA)
+    if not DATA_PATH.exists():
+        raise FileNotFoundError(f"Fichier introuvable : {DATA_PATH}")
+    return pd.read_parquet(DATA_PATH)
 
 def get_client_row(client_id: int) -> pd.Series:
     df = load_clients_data()
