@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.express as px
 
 from src.api_client import (
     get_schema,
@@ -17,6 +18,9 @@ from src.plots import (
     plot_client_vs_population,
     plot_bivariate,
     make_risk_gauge,
+)
+from src.feature_label import (
+    feature_label,
 )
 
 # ---------------------------
@@ -74,6 +78,38 @@ def build_features_from_row(row: pd.Series, schema: list[str] | None = None) -> 
 
     return features
 
+@st.cache_data(show_spinner=False)
+def compute_global_importance(n_samples: int, schema: list[str] | None):
+    """
+    Importance globale = moyenne des |SHAP| sur un échantillon de clients.
+    On appelle l'endpoint /explain pour n_samples clients au max.
+    Résultat : DataFrame (feature, mean_abs_shap) trié décroissant.
+    """
+    from src.api_client import explain  # import local pour éviter boucles
+    df = cached_load_clients_data()
+
+    n = min(n_samples, len(df))
+    df_sample = df.sample(n, random_state=42)
+
+    agg: dict[str, list[float]] = {}
+    for _, row in df_sample.iterrows():
+        feats = build_features_from_row(row, schema if schema else None)
+        try:
+            res = explain(feats)
+            contrib = res.get("contrib", {})
+        except Exception:
+            continue
+
+        for name, v in contrib.items():
+            agg.setdefault(name, []).append(abs(float(v)))
+
+    if not agg:
+        return pd.DataFrame(columns=["mean_abs_shap"])
+
+    mean_abs = {k: float(np.mean(vals)) for k, vals in agg.items() if len(vals) > 0}
+    df_imp = pd.DataFrame.from_dict(mean_abs, orient="index", columns=["mean_abs_shap"])
+    df_imp = df_imp.sort_values("mean_abs_shap", ascending=False)
+    return df_imp
 
 # ---------------------------
 # Sidebar : configuration
@@ -110,7 +146,8 @@ section = st.sidebar.radio(
         "Vue d'ensemble",
         "Interprétation du score",
         "Comparaison population",
-        "Analyse bi-variée"
+        "Analyse bi-variée",
+        "Simulation / Modification client"
     ]
 )
 
@@ -168,10 +205,10 @@ if section == "Vue d'ensemble":
         if proba is not None:
             proba_pct = proba * 100
 
-            if proba < 0.10:
+            if proba < 0.15:
                 risk_level = "Faible"
                 risk_expl = "Le risque estimé est faible."
-            elif proba < 0.30:
+            elif proba < 0.40:
                 risk_level = "Modéré"
                 risk_expl = "Le risque estimé est modéré."
             else:
@@ -182,8 +219,15 @@ if section == "Vue d'ensemble":
             st.write(f"Niveau de risque : **{risk_level}**")
             st.caption(risk_expl)
 
-            gauge_fig = make_risk_gauge(proba)
-            st.plotly_chart(gauge_fig, use_container_width=True)
+            gauge_fig = make_risk_gauge(proba, threshold)
+            st.plotly_chart(
+                gauge_fig,
+                use_container_width=True,
+                config={
+                    "staticPlot": True,
+                    "displayModeBar": False,
+                },
+            )
         else:
             st.write("Probabilité de défaut indisponible.")
 
@@ -192,8 +236,8 @@ if section == "Vue d'ensemble":
     with col3:
         st.subheader("Seuil de décision")
         if proba is not None:
-            distance = abs(proba - threshold)
-            st.write(f"Seuil de décision : **{threshold:.0%}**")
+            distance = proba - threshold
+            st.write(f"Seuil de décision : **{threshold:.1%}**")
             st.write(f"Distance au seuil : **{distance:.1%}**")
 
             if proba >= threshold:
@@ -237,8 +281,12 @@ if section == "Vue d'ensemble":
     st.markdown("---")
     st.subheader("Caractéristiques principales du client")
 
+    # On remplace les noms techniques par des labels FR uniquement pour l'affichage
+    row_display = client_row.copy()
+    row_display.index = [feature_label(idx) for idx in row_display.index]
+
     st.dataframe(
-        pd.DataFrame(client_row).T,
+        pd.DataFrame(row_display).T,
         use_container_width=True
     )
 
@@ -246,57 +294,302 @@ if section == "Vue d'ensemble":
 # Section : Interprétation du score (SHAP local)
 # ---------------------------
 elif section == "Interprétation du score":
-    st.title("Interprétation du score (importance locale)")
+    st.title("Interprétation du score (importance locale vs globale)")
 
+    # --- Importance locale : SHAP pour ce client ---
     try:
         explain_result = explain(features)
-        base_value = explain_result.get("base_value", None)
         contrib = explain_result.get("contrib", {})
     except Exception as e:
         st.error(f"Erreur lors de l'appel à l'API /explain: {e}")
         contrib = {}
-        base_value = None
 
-    if contrib:
-        shap_df = (
-            pd.DataFrame.from_dict(contrib, orient="index", columns=["shap_value"])
-            .sort_values("shap_value", key=lambda s: s.abs(), ascending=False)
-        )
+    col_local, col_global = st.columns(2)
 
-        st.markdown("### Top variables qui influencent la décision pour ce client")
-        st.bar_chart(shap_df)
+    with col_local:
+        st.subheader("Importance locale (ce client)")
 
-        st.caption(
-            "Les valeurs SHAP (en bleu) indiquent la contribution de chaque variable à "
-            "l'augmentation ou la diminution du risque estimé pour ce client."
-        )
+        if contrib:
+            # contrib = {"feature_name": shap_value, ...}
+            local_df = (
+                pd.DataFrame.from_dict(contrib, orient="index", columns=["shap_value"])
+                .assign(abs_shap=lambda d: d["shap_value"].abs())
+            )
 
-        if base_value is not None:
-            st.caption(f"Valeur de base du modèle (base_value) : `{base_value:.4f}`")
-    else:
-        st.info(
-            "Les contributions SHAP ne sont pas disponibles. "
-            "Vérifiez que l'endpoint `/explain` est fonctionnel sur l'API."
-        )
+            # Tri par importance absolue décroissante
+            local_df = local_df.sort_values("abs_shap", ascending=False).head(15)
 
+            # Libellés FR
+            local_df["feature"] = local_df.index
+            local_df["label"] = local_df["feature"].map(feature_label)
+
+            # Direction : vers refus (risque ↑) / vers accord (risque ↓)
+            local_df["direction"] = np.where(
+                local_df["shap_value"] >= 0,
+                "Risque ↑ (pousse vers le refus)",
+                "Risque ↓ (pousse vers l'accord)"
+            )
+
+            # On remet à plat pour Plotly
+            plot_df = local_df.reset_index(drop=True)
+
+            fig_local = px.bar(
+                plot_df,
+                x="label",
+                y="shap_value",
+                color="direction",
+                color_discrete_map={
+                    "Risque ↑ (pousse vers le refus)": "#e74c3c",   # rouge
+                    "Risque ↓ (pousse vers l'accord)": "#2ecc71",   # vert
+                },
+            )
+
+            fig_local.update_layout(
+                xaxis_title="Variables",
+                yaxis_title="Impact sur le risque (valeur SHAP)",
+                xaxis_tickangle=-45,
+                margin=dict(l=0, r=0, t=0, b=120),
+                showlegend=True,
+            )
+            # ligne horizontale à 0
+            fig_local.add_hline(y=0, line_width=1, line_color="black")
+
+            st.plotly_chart(fig_local, use_container_width=True, config={"displayModeBar": False})
+
+            # Texte explicatif simple
+            st.caption(
+                "En vert : les variables qui diminuent le risque et poussent le modèle à **accepter**."
+                " En rouge : celles qui augmentent le risque et poussent vers le **refus**."
+            )
+
+            # Top 3 pour le résumé texte
+            top_feats = (
+                plot_df.sort_values("abs_shap", ascending=False)
+                .head(3)["label"]
+                .tolist()
+            )
+            st.markdown(
+                "Pour ce client, les variables qui ont le plus pesé sont : "
+                + ", ".join(f"**{name}**" for name in top_feats)
+                + "."
+            )
+
+        else:
+            st.info("Les contributions SHAP ne sont pas disponibles pour ce client.")
+
+
+    # --- Importance globale : moyenne SHAP sur un échantillon de clients ---
+    with col_global:
+        st.subheader("Importance globale (population)")
+
+        with st.spinner("Calcul de l'importance globale sur un échantillon de clients..."):
+            global_imp = compute_global_importance(
+                n_samples=200,
+                schema=schema if schema else None,
+            )
+
+        if (global_imp is not None) and (not global_imp.empty):
+            # global_imp : index = feature, colonne = importance moyenne (abs SHAP)
+            # adapte le nom de colonne si besoin : "importance" ou "mean_abs_shap"
+            col_name = "importance" if "importance" in global_imp.columns else global_imp.columns[0]
+
+            gdf = global_imp.copy()
+            gdf["feature"] = gdf.index
+            gdf["label"] = gdf["feature"].map(feature_label)
+
+            gdf = gdf.sort_values(col_name, ascending=False).head(15)
+            plot_gdf = gdf.reset_index(drop=True)
+
+            fig_global = px.bar(
+                plot_gdf,
+                x="label",
+                y=col_name,
+            )
+            fig_global.update_layout(
+                xaxis_title="Variables",
+                yaxis_title="Importance moyenne (|SHAP|)",
+                xaxis_tickangle=-45,
+                margin=dict(l=0, r=0, t=0, b=120),
+                showlegend=False,
+            )
+
+            st.plotly_chart(fig_global, use_container_width=True, config={"displayModeBar": False})
+
+            st.caption(
+                "Ici, on voit les variables que le modèle utilise le plus souvent pour l'ensemble des clients "
+                "(importance moyenne en valeur absolue)."
+            )
+
+        else:
+            st.info("L'importance globale n'a pas pu être calculée.")
+
+    st.markdown(
+        """
+        _À gauche : ce qui a le plus influencé la décision pour **ce client**.
+        À droite : les variables les plus importantes **en moyenne** pour tous les clients._
+        """
+    )
+
+# ---------------------------
+# Section : Comparaison population
+# ---------------------------
 # ---------------------------
 # Section : Comparaison population
 # ---------------------------
 elif section == "Comparaison population":
     st.title("Comparaison du client à la population")
 
+    # On part des colonnes numériques
     numeric_cols = df_clients.select_dtypes(include="number").columns.tolist()
+
+    # On exclut l'identifiant client et éventuellement TARGET de la liste
+    cols_exclure = [client_id_col]
+    if "TARGET" in numeric_cols:
+        cols_exclure.append("TARGET")
+
+    numeric_cols = [c for c in numeric_cols if c not in cols_exclure]
 
     if not numeric_cols:
         st.warning("Aucune variable numérique disponible pour la comparaison.")
     else:
-        feature = st.selectbox("Choisir une variable à comparer", options=numeric_cols)
+        # Sélecteur de variable, avec nom lisible en français
+        feature = st.selectbox(
+            "Choisir une caractéristique à comparer :",
+            options=sorted(numeric_cols),
+            format_func=feature_label,
+        )
 
+        # Valeur du client sur cette variable
+        client_val = client_row[feature]
+
+        st.subheader(f"Position du client sur : {feature_label(feature)}")
+
+        # --- Série brute pour la population ---
+        pop_series = df_clients[feature].dropna().astype(float)
+
+        if pop_series.empty:
+            st.warning("Pas assez de données pour afficher cette caractéristique.")
+            st.stop()
+
+        # Gestion des outliers : on limite l’affichage aux percentiles 1 % – 99 %
+        p1, p99 = np.nanpercentile(pop_series, [1, 99])
+        pop_filtered = pop_series[(pop_series >= p1) & (pop_series <= p99)]
+
+        st.write(
+            "*Distribution affichée limitée au 1ᵉʳ–99ᵉ percentile pour améliorer la lisibilité (hors valeurs extrêmes).*"
+        )
+
+        # Données pour Plotly
+        plot_cols = [feature]
+        color_col = None
+
+        # Si TARGET est disponible, on l'utilise pour colorer l'histogramme
+        if "TARGET" in df_clients.columns:
+            color_col = "TARGET"
+            plot_cols.append("TARGET")
+
+        plot_df = df_clients[plot_cols].dropna().copy()
+        # On applique aussi le filtrage sur les données utilisées pour le graphique
+        plot_df = plot_df[(plot_df[feature] >= p1) & (plot_df[feature] <= p99)]
+
+        if color_col is not None:
+            plot_df["decision_str"] = np.where(
+                plot_df["TARGET"] == 1,
+                "Dossiers en défaut",
+                "Dossiers remboursés"
+            )
+            color_arg = "decision_str"
+        else:
+            color_arg = None
+
+        # --- Histogramme population tronquée ---
+        fig_hist = px.histogram(
+            plot_df,
+            x=feature,
+            color=color_arg,
+            nbins=40,
+            opacity=0.75,
+            histnorm=None,
+        )
+
+        fig_hist.update_layout(
+            xaxis_title=feature_label(feature),
+            yaxis_title="Nombre de clients",
+            margin=dict(l=0, r=0, t=10, b=40),
+            bargap=0.05,
+            legend_title_text="",
+        )
+
+        # --- Ligne verticale / annotation pour le client ---
         try:
-            fig = plot_client_vs_population(df_clients, client_row, feature)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Erreur lors de la génération du graphique: {e}")
+            x_client = float(client_val)
+
+            if p1 <= x_client <= p99:
+                # Le client est dans la zone affichée
+                fig_hist.add_vline(
+                    x=x_client,
+                    line_width=2,
+                    line_color="black",
+                    annotation_text="Client",
+                    annotation_position="top",
+                )
+            else:
+                # Hors cadre : on ajoute une annotation au bord
+                direction = "droite" if x_client > p99 else "gauche"
+                fig_hist.add_annotation(
+                    x=p99 if x_client > p99 else p1,
+                    y=0,
+                    text=f"Client hors cadre → ({direction})",
+                    showarrow=True,
+                    arrowhead=2,
+                    yshift=30,
+                )
+        except Exception:
+            pass  # si la valeur n'est pas numérique, on ne met pas de ligne
+
+        st.plotly_chart(
+            fig_hist,
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+
+        # --- Résumé statistique simple sur la distribution complète ---
+        if np.isfinite(float(client_val)):
+            q10, q50, q90 = np.nanpercentile(pop_series, [10, 50, 90])
+
+            # formatage "français" rapide (espace pour séparateur milliers)
+            def fmt(x):
+                try:
+                    return f"{x:,.2f}".replace(",", " ").replace(".00", "")
+                except Exception:
+                    return str(x)
+
+            st.markdown(
+                f"""
+- Valeur du client : **{fmt(client_val)}**
+- Médiane de la population : **{fmt(q50)}**
+- Intervalle "habituel" (10 % – 90 %) : **[{fmt(q10)} ; {fmt(q90)}]**
+                """
+            )
+
+            # Position relative du client
+            client_val_float = float(client_val)
+            if client_val_float < q10:
+                pos_txt = "Le client se situe **nettement en dessous** de la majorité des dossiers."
+            elif client_val_float > q90:
+                pos_txt = "Le client se situe **nettement au-dessus** de la majorité des dossiers."
+            elif client_val_float < q50:
+                pos_txt = "Le client est **plutôt en dessous** de la moyenne."
+            else:
+                pos_txt = "Le client est **plutôt au-dessus** de la moyenne."
+
+            st.caption(
+                f"Lecture : {pos_txt} Cela permet au chargé de clientèle de situer ce client par rapport aux autres."
+            )
+        else:
+            st.caption(
+                "Impossible de calculer un résumé statistique pour cette variable (valeur client non numérique)."
+            )
 
 # ---------------------------
 # Section : Analyse bi-variée
@@ -304,25 +597,241 @@ elif section == "Comparaison population":
 elif section == "Analyse bi-variée":
     st.title("Analyse bi-variée")
 
+    # Colonnes numériques
     numeric_cols = df_clients.select_dtypes(include="number").columns.tolist()
+
+    # On exclut l'identifiant client et TARGET des variables candidates
+    cols_exclure = [client_id_col]
+    if "TARGET" in numeric_cols:
+        cols_exclure.append("TARGET")
+
+    numeric_cols = [c for c in numeric_cols if c not in cols_exclure]
+
     if len(numeric_cols) < 2:
         st.warning("Pas assez de variables numériques pour réaliser une analyse bi-variée.")
     else:
         col_x, col_y = st.columns(2)
         with col_x:
-            feature_x = st.selectbox("Variable X", options=numeric_cols, key="feature_x")
+            feature_x = st.selectbox(
+                "Variable X",
+                options=sorted(numeric_cols),
+                key="feature_x",
+                format_func=feature_label,
+            )
         with col_y:
-            feature_y = st.selectbox("Variable Y", options=numeric_cols, key="feature_y")
+            feature_y = st.selectbox(
+                "Variable Y",
+                options=sorted(numeric_cols),
+                key="feature_y",
+                format_func=feature_label,
+            )
 
-        color_col = st.selectbox(
+        # Option de coloration
+        color_options = ["(aucune)"]
+        if "TARGET" in df_clients.columns:
+            color_options.append("Statut de remboursement (TARGET)")
+
+        color_choice = st.selectbox(
             "Coloration par variable (optionnel)",
-            options=["(aucune)"] + numeric_cols,
-            index=0
+            options=color_options,
+            index=1 if "Statut de remboursement (TARGET)" in color_options else 0,
         )
-        color_arg = None if color_col == "(aucune)" else color_col
 
-        try:
-            fig = plot_bivariate(df_clients, feature_x, feature_y, color=color_arg)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Erreur lors de la génération du graphique bi-varié: {e}")
+        if color_choice == "Statut de remboursement (TARGET)" and "TARGET" in df_clients.columns:
+            color_arg = "TARGET"
+        else:
+            color_arg = None
+
+        # Préparation des données brutes
+        cols = [feature_x, feature_y]
+        if color_arg is not None:
+            cols.append("TARGET")
+
+        df_plot = df_clients[cols].dropna().copy()
+
+        if df_plot.empty:
+            st.warning("Pas assez de données disponibles sur ces deux variables.")
+        else:
+            # Gestion des outliers sur X et Y : 1 % – 99 %
+            x_series = df_plot[feature_x].astype(float)
+            y_series = df_plot[feature_y].astype(float)
+
+            x1, x99 = np.nanpercentile(x_series, [1, 99])
+            y1, y99 = np.nanpercentile(y_series, [1, 99])
+
+            # Filtrage manuel (sans .between, et en s'assurant que c'est 1D)
+            mask = (
+                (x_series >= x1) & (x_series <= x99) &
+                (y_series >= y1) & (y_series <= y99)
+            )
+            df_plot = df_plot[mask]
+
+            st.write(
+                "*Affichage limité au 1ᵉʳ–99ᵉ percentile pour chaque axe afin de réduire l'impact des valeurs extrêmes.*"
+            )
+
+            # Construction explicite du DataFrame pour le scatter (1D garanti)
+            df_scatter = pd.DataFrame({
+                "x": df_plot[feature_x].astype(float).values.ravel(),
+                "y": df_plot[feature_y].astype(float).values.ravel(),
+            })
+
+            color_plot = None
+            if color_arg == "TARGET":
+                df_scatter["statut"] = np.where(
+                    df_plot["TARGET"].values == 1,
+                    "Dossiers en défaut",
+                    "Dossiers remboursés",
+                )
+                color_plot = "statut"
+
+            # Nuage de points population
+            fig = px.scatter(
+                df_scatter,
+                x="x",
+                y="y",
+                color=color_plot,
+                opacity=0.5,
+            )
+
+            fig.update_layout(
+                xaxis_title=feature_label(feature_x),
+                yaxis_title=feature_label(feature_y),
+                margin=dict(l=0, r=0, t=10, b=40),
+                legend_title_text="",
+            )
+
+            # Ajout du point du client
+            try:
+                x_client = float(client_row[feature_x])
+                y_client = float(client_row[feature_y])
+
+                fig.add_scatter(
+                    x=[x_client],
+                    y=[y_client],
+                    mode="markers+text",
+                    marker=dict(color="red", size=12, symbol="x"),
+                    text=["Client"],
+                    textposition="top center",
+                    name="Client sélectionné",
+                    showlegend=True,
+                )
+            except Exception:
+                # Si une des valeurs n'est pas numérique ou manquante, on ignore
+                pass
+
+            st.plotly_chart(
+                fig,
+                use_container_width=True,
+                config={"displayModeBar": False},
+            )
+
+            st.caption(
+                "Chaque point représente un client. Le point noir correspond au client sélectionné. "
+                "Ce graphique permet de voir comment il se positionne par rapport aux autres sur ces deux dimensions."
+            )
+
+# ---------------------------
+# Section : Simulation / Modification client
+# ---------------------------
+elif section == "Simulation / Modification client":
+    st.title("Simulation : Modifier les informations du client")
+
+    st.write(
+        "Cette section permet de tester l'impact des changements de caractéristiques sur la décision du modèle."
+    )
+
+    if schema is None or len(schema) == 0:
+        st.error("Impossible de récupérer le schéma des données depuis l'API.")
+        st.stop()
+
+    # On part de la ligne du client actuel
+    editable_row = client_row.copy()
+
+    st.subheader("Modifier les caractéristiques du client")
+    st.caption("⚠️ Ceci ne modifie pas la base réelle — uniquement une simulation locale.")
+
+    with st.form("edit_form"):
+        edited_values = {}
+
+        # on boucle sur chaque feature du modèle
+        for col in schema:
+            raw_val = editable_row[col] if col in editable_row.index else None
+
+            # type detection simple
+            if isinstance(raw_val, (int, np.integer)):
+                new_val = st.number_input(
+                    feature_label(col),
+                    value=int(raw_val) if raw_val is not None else 0
+                )
+            elif isinstance(raw_val, (float, np.floating)):
+                new_val = st.number_input(
+                    feature_label(col),
+                    value=float(raw_val) if raw_val is not None else 0.0,
+                    step=0.1
+                )
+            else:
+                new_val = st.text_input(
+                    feature_label(col),
+                    value=str(raw_val) if raw_val is not None else ""
+                )
+
+            edited_values[col] = new_val
+
+        submitted = st.form_submit_button("Simuler la décision")
+
+        if submitted:
+            st.subheader("Résultat de la simulation")
+
+            # Conversion JSON safe
+            features_sim = {
+                k: to_json_serializable(v)
+                for k, v in edited_values.items()
+            }
+
+            try:
+                pred_sim = predict(features_sim)
+                proba_sim = float(pred_sim.get("probability", 0.0))
+                pred_label_sim = "ACCORDÉ" if pred_sim.get("prediction", 0) == 0 else "REFUSÉ"
+                st.metric("Décision simulée", pred_label_sim)
+                st.metric("Probabilité de défaut simulée", f"{proba_sim*100:.2f} %")
+            except Exception as e:
+                st.error(f"Erreur lors de l'appel à l'API /predict: {e}")
+                st.stop()
+
+            st.markdown("---")
+            st.subheader("Variables impactant la décision simulée (SHAP)")
+
+            try:
+                explain_sim = explain(features_sim)
+                contrib_sim = explain_sim.get("contrib", {})
+            except Exception as e:
+                st.error(f"Erreur lors de l'appel à l'API /explain: {e}")
+                contrib_sim = {}
+
+            if contrib_sim:
+                df_sim_local = (
+                    pd.DataFrame.from_dict(contrib_sim, orient="index", columns=["shap_value"])
+                    .assign(abs_shap=lambda d: d["shap_value"].abs())
+                    .sort_values("abs_shap", ascending=False)
+                    .head(15)
+                )
+
+                df_sim_local["label"] = df_sim_local.index.map(feature_label)
+
+                fig_sim = px.bar(
+                    df_sim_local.reset_index(drop=True),
+                    x="label",
+                    y="shap_value",
+                    color="shap_value",
+                    color_continuous_scale=["#2ecc71", "#e74c3c"],
+                )
+                fig_sim.update_layout(
+                    xaxis_title="Variables",
+                    yaxis_title="Impact SHAP (simulation)",
+                    xaxis_tickangle=-45,
+                )
+                st.plotly_chart(fig_sim, use_container_width=True)
+
+            else:
+                st.info("Aucune importance locale disponible pour cette simulation.")

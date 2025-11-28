@@ -14,3 +14,7 @@ venv/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Notebooks
+notebooks/*
+*.ipynb

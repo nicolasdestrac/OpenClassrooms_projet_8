@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -43,47 +44,90 @@ def plot_bivariate(df: pd.DataFrame, feature_x: str, feature_y: str, color: str 
     )
     return fig
 
-def make_risk_gauge(proba: float):
+import numpy as np
+import plotly.graph_objects as go
+
+def make_risk_gauge(proba: float, threshold: float):
     """
-    Jauge de risque : 0% (vert) -> 100% (rouge).
-    proba est entre 0 et 1.
+    Jauge linéaire 0-100 % :
+
+    - Fond : dégradé vert -> rouge foncé sur toute la barre 0 → 100
+    - Par-dessus : partie proba → 100 recouverte en gris
+    - Ligne noire verticale au seuil
     """
-    # clamp au cas où
     if proba is None:
         proba = 0.0
-    proba = max(0.0, min(1.0, float(proba)))
+    proba = float(proba)
+    proba = max(0.0, min(1.0, proba))
     value_pct = proba * 100
+    threshold_pct = threshold * 100
 
-    fig = go.Figure(
-        go.Indicator(
-            mode="gauge+number",
-            value=value_pct,
-            number={"suffix": " %"},
-            gauge={
-                "axis": {"range": [0, 100]},
-                # On laisse la "barre" transparente et on trace un seuil pour la valeur
-                "bar": {"color": "rgba(0,0,0,0)"},
-                # On approxime un dégradé vert -> rouge avec plusieurs steps
-                "steps": [
-                    {"range": [0, 10],  "color": "#2ecc71"},  # vert
-                    {"range": [10, 30], "color": "#a3d977"},  # vert-jaune
-                    {"range": [30, 50], "color": "#f1c40f"},  # jaune
-                    {"range": [50, 70], "color": "#e64922"},  # orange
-                    {"range": [70, 85], "color": "#d42929"},  # orange-rouge
-                    {"range": [85, 100], "color": "#aa0000"}, # rouge écarlate
-                ],
-                "threshold": {
-                    "line": {"color": "black", "width": 4},
-                    "thickness": 0.8,
-                    "value": value_pct,
-                },
-            },
+    N = 200  # résolution de la barre
+
+    fig = go.Figure()
+
+    # --- 1) Dégradé complet 0 -> 100 (toujours le même) ---
+    x_full = np.linspace(0, 100, N)
+    z_full = np.linspace(0, 1, N)  # 0=vert, 1=rouge foncé
+
+    fig.add_trace(
+        go.Heatmap(
+            x=x_full,
+            y=[0],
+            z=[z_full],  # shape (1, N)
+            colorscale=[
+                [0.0, "#2ecc71"],  # vert
+                [0.30, "#f3f044"],  # vert
+                [0.5, "#e22828"],  # rouge foncé
+                [1.0, "#920000"],  # vert
+            ],
+            showscale=False,
+            hoverinfo="skip",
         )
     )
 
+    # --- 2) Recouvrement gris de proba -> 100 ---
+    if value_pct < 100:
+        x_grey = np.linspace(value_pct, 100, N)
+        z_grey = np.zeros(N)
+
+        fig.add_trace(
+            go.Heatmap(
+                x=x_grey,
+                y=[0],
+                z=[z_grey],
+                colorscale=[
+                    [0.0, "#e0e0e0"],
+                    [1.0, "#e0e0e0"],
+                ],
+                showscale=False,
+                hoverinfo="skip",
+            )
+        )
+
+    # --- 3) Ligne verticale à la proba du client ---
+    fig.add_shape(
+        type="line",
+        x0=threshold_pct,
+        x1=threshold_pct,
+        y0=-0.3,
+        y1=0.3,
+        line=dict(color="black", width=2),
+    )
+
+    fig.update_xaxes(
+        range=[0, 100],
+        ticks="outside",
+        showgrid=False,
+    )
+    fig.update_yaxes(
+        visible=False,
+        range=[-0.25, 0.25],
+    )
+
     fig.update_layout(
-        margin=dict(l=10, r=10, t=30, b=10),
-        height=220,
+        height=30,
+        margin=dict(l=0, r=20, t=10, b=10),
     )
 
     return fig
