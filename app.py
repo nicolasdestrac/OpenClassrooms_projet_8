@@ -32,6 +32,33 @@ st.set_page_config(
 )
 
 # ---------------------------
+# Thème & accessibilité (WCAG)
+# ---------------------------
+st.markdown(
+    """
+    <style>
+    /* Couleur de texte plus foncée pour le contraste */
+    html, body, [class*="css"]  {
+        color: #111111 !important;
+        font-size: 16px;
+    }
+
+    /* Lien et boutons : focus clavier bien visible */
+    a:focus-visible, button:focus-visible, [role="button"]:focus-visible {
+        outline: 3px solid #ff8800 !important;
+        outline-offset: 2px;
+    }
+
+    /* Légères bordures pour séparer les blocs (lisibilité) */
+    section.main > div {
+        border-radius: 0;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------------------------
 # Helpers
 # ---------------------------
 
@@ -228,6 +255,13 @@ if section == "Vue d'ensemble":
                     "displayModeBar": False,
                 },
             )
+
+            st.caption(
+                f"La jauge ci-dessus représente la probabilité de défaut du client : "
+                f"**{proba_pct:.1f} %** sur une échelle de 0 à 100 %. "
+                "Plus la jauge se rapproche de la droite, plus le risque estimé est élevé."
+            )
+
         else:
             st.write("Probabilité de défaut indisponible.")
 
@@ -339,8 +373,10 @@ elif section == "Interprétation du score":
                 y="shap_value",
                 color="direction",
                 color_discrete_map={
-                    "Risque ↑ (pousse vers le refus)": "#e74c3c",   # rouge
-                    "Risque ↓ (pousse vers l'accord)": "#2ecc71",   # vert
+                    # Rouge pour “risque ↑”
+                    "Risque ↑ (pousse vers le refus)": "#CC0000",
+                    # Bleu pour “risque ↓”
+                    "Risque ↓ (pousse vers l'accord)": "#0057B8",
                 },
             )
 
@@ -351,14 +387,13 @@ elif section == "Interprétation du score":
                 margin=dict(l=0, r=0, t=0, b=120),
                 showlegend=True,
             )
-            # ligne horizontale à 0
             fig_local.add_hline(y=0, line_width=1, line_color="black")
 
             st.plotly_chart(fig_local, use_container_width=True, config={"displayModeBar": False})
 
             # Texte explicatif simple
             st.caption(
-                "En vert : les variables qui diminuent le risque et poussent le modèle à **accepter**."
+                "En bleu : les variables qui diminuent le risque et poussent le modèle à **accepter**."
                 " En rouge : celles qui augmentent le risque et poussent vers le **refus**."
             )
 
@@ -416,8 +451,8 @@ elif section == "Interprétation du score":
             st.plotly_chart(fig_global, use_container_width=True, config={"displayModeBar": False})
 
             st.caption(
-                "Ici, on voit les variables que le modèle utilise le plus souvent pour l'ensemble des clients "
-                "(importance moyenne en valeur absolue)."
+                "Le graphique met en évidence les variables que le modèle utilise le plus souvent "
+                "pour l'ensemble des clients, en termes d'importance moyenne absolue des valeurs SHAP."
             )
 
         else:
@@ -430,9 +465,6 @@ elif section == "Interprétation du score":
         """
     )
 
-# ---------------------------
-# Section : Comparaison population
-# ---------------------------
 # ---------------------------
 # Section : Comparaison population
 # ---------------------------
@@ -508,8 +540,11 @@ elif section == "Comparaison population":
             x=feature,
             color=color_arg,
             nbins=40,
-            opacity=0.75,
-            histnorm=None,
+            opacity=0.8,
+            color_discrete_map={
+                "Dossiers en défaut": "#CC0000",
+                "Dossiers remboursés": "#0057B8",
+            } if color_arg else None,
         )
 
         fig_hist.update_layout(
@@ -519,6 +554,12 @@ elif section == "Comparaison population":
             bargap=0.05,
             legend_title_text="",
         )
+
+        if color_arg:
+            st.caption(
+                "En rouge : clients ayant connu un défaut de remboursement. "
+                "En bleu : clients ayant remboursé leur crédit."
+            )
 
         # --- Ligne verticale / annotation pour le client ---
         try:
@@ -551,6 +592,11 @@ elif section == "Comparaison population":
             fig_hist,
             use_container_width=True,
             config={"displayModeBar": False},
+        )
+
+        st.caption(
+            f"Le graphique montre la distribution de **{feature_label(feature)}** "
+            "pour l'ensemble des clients. La ligne verticale noire indique la position du client sélectionné."
         )
 
         # --- Résumé statistique simple sur la distribution complète ---
@@ -727,8 +773,9 @@ elif section == "Analyse bi-variée":
             )
 
             st.caption(
-                "Chaque point représente un client. Le point noir correspond au client sélectionné. "
-                "Ce graphique permet de voir comment il se positionne par rapport aux autres sur ces deux dimensions."
+                f"Chaque point représente un client dans le plan "
+                f"({feature_label(feature_x)} ; {feature_label(feature_y)}). "
+                "Le symbole en forme de croix correspond au client sélectionné."
             )
 
 # ---------------------------
