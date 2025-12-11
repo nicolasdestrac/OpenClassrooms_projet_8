@@ -37,21 +37,78 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    /* Couleur de texte plus foncée pour le contraste */
-    html, body, [class*="css"]  {
+    /* --------- Base typographique --------- */
+    html, body, [class*="css"] {
         color: #111111 !important;
         font-size: 16px;
+        line-height: 1.5;
     }
 
-    /* Lien et boutons : focus clavier bien visible */
-    a:focus-visible, button:focus-visible, [role="button"]:focus-visible {
+    /* Titres Streamlit (h1, h2, h3) */
+    h1, h2, h3, h4 {
+        color: #111111 !important;
+        font-weight: 700 !important;
+    }
+
+    /* Texte "caption" de Streamlit : on le fonce aussi */
+    .st-emotion-cache-1v0mbdj,  /* class fréquente pour ally_small */
+    .stCaption, .css-145kmo2, .css-12ttj6m {
+        color: #333333 !important;
+        font-size: 0.95rem !important;
+    }
+
+    /* Lien et boutons : forte visibilité + focus clavier */
+    a, a:visited {
+        color: #0057B8 !important;
+        text-decoration: underline;
+    }
+    a:hover {
+        color: #003f82 !important;
+    }
+    button, .stButton button {
+        min-height: 40px;
+        padding: 0.4rem 0.9rem;
+        border-radius: 4px;
+        border: 1px solid #004a99;
+        background-color: #0057B8;
+        color: #ffffff !important;
+        font-weight: 600;
+    }
+    button:hover, .stButton button:hover {
+        background-color: #004a99;
+    }
+
+    /* Focus clavier bien visible : WCAG 2.4.7 */
+    a:focus-visible,
+    button:focus-visible,
+    [role="button"]:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible {
         outline: 3px solid #ff8800 !important;
         outline-offset: 2px;
     }
 
-    /* Légères bordures pour séparer les blocs (lisibilité) */
+    /* Séparateurs visuels légers entre blocs principaux */
     section.main > div {
         border-radius: 0;
+    }
+
+    /* Sidebar : texte plus foncé aussi */
+    [data-testid="stSidebar"] {
+        color: #111111 !important;
+    }
+
+    /* Amélioration des radios / cases à cocher pour clic + large */
+    label[data-baseweb="radio"] > div,
+    label[data-baseweb="checkbox"] > div {
+        padding-top: 2px;
+        padding-bottom: 2px;
+    }
+
+    /* Eviter que les légendes de graphiques soient trop petites */
+    .legendtext {
+        font-size: 12px !important;
     }
     </style>
     """,
@@ -61,7 +118,6 @@ st.markdown(
 # ---------------------------
 # Helpers
 # ---------------------------
-
 @st.cache_data
 def cached_load_clients_data():
     return load_clients_data()
@@ -138,6 +194,24 @@ def compute_global_importance(n_samples: int, schema: list[str] | None):
     df_imp = df_imp.sort_values("mean_abs_shap", ascending=False)
     return df_imp
 
+def a11y_caption(text: str):
+    """
+    Alternative à ally_small avec un contraste suffisant.
+    """
+    st.markdown(
+        f"<p style='color:#333333; font-size:0.95rem;'>{text}</p>",
+        unsafe_allow_html=True,
+    )
+
+def a11y_small(text: str):
+    """
+    Pour un petit texte d'aide (par ex. sous les graphiques).
+    """
+    st.markdown(
+        f"<p style='color:#333333; font-size:0.9rem;'>{text}</p>",
+        unsafe_allow_html=True,
+    )
+
 # ---------------------------
 # Sidebar : configuration
 # ---------------------------
@@ -151,7 +225,7 @@ with st.sidebar.expander("Statut de l'API"):
         st.json(health)
     except Exception as e:
         st.error("❌ Impossible de joindre l'API")
-        st.caption(str(e))
+        a11y_small(str(e))
 
 # Chargement des données clients
 try:
@@ -221,7 +295,7 @@ if section == "Vue d'ensemble":
     with col1:
         st.subheader("Décision du modèle")
         if prediction is not None:
-            decision_label = "ACCORDÉ" if prediction == 0 else "REFUSÉ"
+            decision_label = "✅ ACCORDÉ" if prediction == 0 else "❌ REFUSÉ"
             st.metric("Décision modèle", decision_label)
         else:
             st.metric("Décision modèle", "Indisponible")
@@ -244,7 +318,7 @@ if section == "Vue d'ensemble":
 
             st.metric("Probabilité de défaut", f"{proba_pct:.1f} %")
             st.write(f"Niveau de risque : **{risk_level}**")
-            st.caption(risk_expl)
+            a11y_small(risk_expl)
 
             gauge_fig = make_risk_gauge(proba, threshold)
             st.plotly_chart(
@@ -256,7 +330,7 @@ if section == "Vue d'ensemble":
                 },
             )
 
-            st.caption(
+            a11y_small(
                 f"La jauge ci-dessus représente la probabilité de défaut du client : "
                 f"**{proba_pct:.1f} %** sur une échelle de 0 à 100 %. "
                 "Plus la jauge se rapproche de la droite, plus le risque estimé est élevé."
@@ -310,7 +384,7 @@ if section == "Vue d'ensemble":
             """
         )
     else:
-        st.caption("Résumé indisponible car la prédiction n'a pas pu être calculée.")
+        a11y_small("Résumé indisponible car la prédiction n'a pas pu être calculée.")
 
     st.markdown("---")
     st.subheader("Caractéristiques principales du client")
@@ -392,9 +466,9 @@ elif section == "Interprétation du score":
             st.plotly_chart(fig_local, use_container_width=True, config={"displayModeBar": False})
 
             # Texte explicatif simple
-            st.caption(
+            a11y_small(
                 "En bleu : les variables qui diminuent le risque et poussent le modèle à **accepter**."
-                " En rouge : celles qui augmentent le risque et poussent vers le **refus**."
+                "En rouge : celles qui augmentent le risque et poussent vers le **refus**."
             )
 
             # Top 3 pour le résumé texte
@@ -450,7 +524,7 @@ elif section == "Interprétation du score":
 
             st.plotly_chart(fig_global, use_container_width=True, config={"displayModeBar": False})
 
-            st.caption(
+            a11y_small(
                 "Le graphique met en évidence les variables que le modèle utilise le plus souvent "
                 "pour l'ensemble des clients, en termes d'importance moyenne absolue des valeurs SHAP."
             )
@@ -556,7 +630,7 @@ elif section == "Comparaison population":
         )
 
         if color_arg:
-            st.caption(
+            a11y_small(
                 "En rouge : clients ayant connu un défaut de remboursement. "
                 "En bleu : clients ayant remboursé leur crédit."
             )
@@ -594,7 +668,7 @@ elif section == "Comparaison population":
             config={"displayModeBar": False},
         )
 
-        st.caption(
+        a11y_small(
             f"Le graphique montre la distribution de **{feature_label(feature)}** "
             "pour l'ensemble des clients. La ligne verticale noire indique la position du client sélectionné."
         )
@@ -629,11 +703,11 @@ elif section == "Comparaison population":
             else:
                 pos_txt = "Le client est **plutôt au-dessus** de la moyenne."
 
-            st.caption(
+            a11y_small(
                 f"Lecture : {pos_txt} Cela permet au chargé de clientèle de situer ce client par rapport aux autres."
             )
         else:
-            st.caption(
+            a11y_small(
                 "Impossible de calculer un résumé statistique pour cette variable (valeur client non numérique)."
             )
 
@@ -732,51 +806,21 @@ elif section == "Analyse bi-variée":
                 color_plot = "statut"
 
             # Nuage de points population
-            fig = px.scatter(
-                df_scatter,
-                x="x",
-                y="y",
-                color=color_plot,
-                opacity=0.5,
+            fig = plot_bivariate(
+                df_clients,
+                feature_x,
+                feature_y,
+                color=color_arg,
+                client_row=client_row,
             )
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-            fig.update_layout(
-                xaxis_title=feature_label(feature_x),
-                yaxis_title=feature_label(feature_y),
-                margin=dict(l=0, r=0, t=10, b=40),
-                legend_title_text="",
-            )
-
-            # Ajout du point du client
-            try:
-                x_client = float(client_row[feature_x])
-                y_client = float(client_row[feature_y])
-
-                fig.add_scatter(
-                    x=[x_client],
-                    y=[y_client],
-                    mode="markers+text",
-                    marker=dict(color="red", size=12, symbol="x"),
-                    text=["Client"],
-                    textposition="top center",
-                    name="Client sélectionné",
-                    showlegend=True,
-                )
-            except Exception:
-                # Si une des valeurs n'est pas numérique ou manquante, on ignore
-                pass
-
-            st.plotly_chart(
-                fig,
-                use_container_width=True,
-                config={"displayModeBar": False},
-            )
-
-            st.caption(
+            a11y_small(
                 f"Chaque point représente un client dans le plan "
                 f"({feature_label(feature_x)} ; {feature_label(feature_y)}). "
-                "Le symbole en forme de croix correspond au client sélectionné."
+                "Le symbole en forme de croix rouge correspond au client sélectionné."
             )
+
 
 # ---------------------------
 # Section : Simulation / Modification client
@@ -785,7 +829,8 @@ elif section == "Simulation / Modification client":
     st.title("Simulation : Modifier les informations du client")
 
     st.write(
-        "Cette section permet de tester l'impact des changements de caractéristiques sur la décision du modèle."
+        "Cette section permet de tester l'impact de changements de caractéristiques "
+        "sur la décision du modèle, sans modifier la base réelle."
     )
 
     if schema is None or len(schema) == 0:
@@ -795,90 +840,146 @@ elif section == "Simulation / Modification client":
     # On part de la ligne du client actuel
     editable_row = client_row.copy()
 
+    st.subheader("Choix des caractéristiques à modifier")
+    a11y_small(
+        "Par défaut, seules les caractéristiques les plus importantes pour le modèle "
+        "sont proposées. Vous pouvez ajouter d'autres champs si besoin."
+    )
+
+    # --- 1) Déterminer les features les plus importantes (global SHAP) ---
+    try:
+        global_imp = compute_global_importance(
+            n_samples=200,
+            schema=schema if schema else None,
+        )
+    except Exception:
+        global_imp = None
+
+    if global_imp is not None and not global_imp.empty:
+        col_name = "importance" if "importance" in global_imp.columns else global_imp.columns[0]
+        important_features = (
+            global_imp.sort_values(col_name, ascending=False)
+            .head(15)
+            .index.tolist()
+        )
+        # Sécurité : on garde uniquement celles présentes dans le schéma
+        important_features = [f for f in important_features if f in schema]
+    else:
+        # fallback : premières colonnes du schéma (hors ID si besoin)
+        important_features = [c for c in schema if c != client_id_col][:15]
+
+    # Liste des autres features possibles à ajouter
+    remaining_features = [c for c in schema if c not in important_features]
+
+    # Multi-sélecteur pour ajouter d'autres features
+    extra_features = st.multiselect(
+        "Ajouter d'autres caractéristiques à la simulation :",
+        options=sorted(remaining_features),
+        format_func=feature_label,
+    )
+
+    # Ensemble final de colonnes éditables (ordre : importantes d'abord)
+    editable_cols = important_features + extra_features
+
+    st.markdown("---")
     st.subheader("Modifier les caractéristiques du client")
-    st.caption("⚠️ Ceci ne modifie pas la base réelle — uniquement une simulation locale.")
+    a11y_small("⚠️ Ceci ne modifie pas la base réelle — uniquement une simulation locale.")
 
     with st.form("edit_form"):
-        edited_values = {}
+        edited_values: dict[str, object] = {}
 
-        # on boucle sur chaque feature du modèle
-        for col in schema:
+        # --- 2) Widgets uniquement pour les colonnes choisies ---
+        for col in editable_cols:
             raw_val = editable_row[col] if col in editable_row.index else None
 
-            # type detection simple
+            label_fr = feature_label(col)
+
+            # Détection de type simple
             if isinstance(raw_val, (int, np.integer)):
                 new_val = st.number_input(
-                    feature_label(col),
-                    value=int(raw_val) if raw_val is not None else 0
+                    label_fr,
+                    value=int(raw_val) if raw_val is not None else 0,
                 )
             elif isinstance(raw_val, (float, np.floating)):
                 new_val = st.number_input(
-                    feature_label(col),
+                    label_fr,
                     value=float(raw_val) if raw_val is not None else 0.0,
-                    step=0.1
+                    step=0.1,
                 )
             else:
                 new_val = st.text_input(
-                    feature_label(col),
-                    value=str(raw_val) if raw_val is not None else ""
+                    label_fr,
+                    value=str(raw_val) if raw_val is not None else "",
                 )
 
             edited_values[col] = new_val
 
         submitted = st.form_submit_button("Simuler la décision")
 
-        if submitted:
-            st.subheader("Résultat de la simulation")
+    if submitted:
+        st.subheader("Résultat de la simulation")
 
-            # Conversion JSON safe
-            features_sim = {
-                k: to_json_serializable(v)
-                for k, v in edited_values.items()
-            }
-
-            try:
-                pred_sim = predict(features_sim)
-                proba_sim = float(pred_sim.get("probability", 0.0))
-                pred_label_sim = "ACCORDÉ" if pred_sim.get("prediction", 0) == 0 else "REFUSÉ"
-                st.metric("Décision simulée", pred_label_sim)
-                st.metric("Probabilité de défaut simulée", f"{proba_sim*100:.2f} %")
-            except Exception as e:
-                st.error(f"Erreur lors de l'appel à l'API /predict: {e}")
-                st.stop()
-
-            st.markdown("---")
-            st.subheader("Variables impactant la décision simulée (SHAP)")
-
-            try:
-                explain_sim = explain(features_sim)
-                contrib_sim = explain_sim.get("contrib", {})
-            except Exception as e:
-                st.error(f"Erreur lors de l'appel à l'API /explain: {e}")
-                contrib_sim = {}
-
-            if contrib_sim:
-                df_sim_local = (
-                    pd.DataFrame.from_dict(contrib_sim, orient="index", columns=["shap_value"])
-                    .assign(abs_shap=lambda d: d["shap_value"].abs())
-                    .sort_values("abs_shap", ascending=False)
-                    .head(15)
-                )
-
-                df_sim_local["label"] = df_sim_local.index.map(feature_label)
-
-                fig_sim = px.bar(
-                    df_sim_local.reset_index(drop=True),
-                    x="label",
-                    y="shap_value",
-                    color="shap_value",
-                    color_continuous_scale=["#2ecc71", "#e74c3c"],
-                )
-                fig_sim.update_layout(
-                    xaxis_title="Variables",
-                    yaxis_title="Impact SHAP (simulation)",
-                    xaxis_tickangle=-45,
-                )
-                st.plotly_chart(fig_sim, use_container_width=True)
-
+        # --- 3) Construire le payload complet pour l'API ---
+        # Pour toutes les colonnes du schéma :
+        # - si l'utilisateur a modifié la valeur (editable_cols) => on prend edited_values
+        # - sinon => on garde la valeur originale du client
+        features_sim: dict[str, object] = {}
+        for col in schema:
+            if col in edited_values:
+                v = edited_values[col]
             else:
-                st.info("Aucune importance locale disponible pour cette simulation.")
+                v = editable_row[col] if col in editable_row.index else None
+            features_sim[col] = to_json_serializable(v)
+
+        # --- 4) Appels API /predict et /explain avec les valeurs simulées ---
+        try:
+            pred_sim = predict(features_sim)
+            proba_sim = float(pred_sim.get("probability", 0.0))
+            pred_label_sim = "ACCORDÉ" if pred_sim.get("prediction", 0) == 0 else "REFUSÉ"
+
+            st.metric("Décision simulée", pred_label_sim)
+            st.metric("Probabilité de défaut simulée", f"{proba_sim * 100:.2f} %")
+        except Exception as e:
+            st.error(f"Erreur lors de l'appel à l'API /predict: {e}")
+            st.stop()
+
+        st.markdown("---")
+        st.subheader("Variables impactant la décision simulée (SHAP)")
+
+        try:
+            explain_sim = explain(features_sim)
+            contrib_sim = explain_sim.get("contrib", {})
+        except Exception as e:
+            st.error(f"Erreur lors de l'appel à l'API /explain: {e}")
+            contrib_sim = {}
+
+        if contrib_sim:
+            df_sim_local = (
+                pd.DataFrame.from_dict(contrib_sim, orient="index", columns=["shap_value"])
+                .assign(abs_shap=lambda d: d["shap_value"].abs())
+                .sort_values("abs_shap", ascending=False)
+                .head(15)
+            )
+
+            df_sim_local["label"] = df_sim_local.index.map(feature_label)
+
+            fig_sim = px.bar(
+                df_sim_local.reset_index(drop=True),
+                x="label",
+                y="shap_value",
+                color="shap_value",
+                color_continuous_scale=["#0057B8", "#CC0000"],  # bleu -> rouge (WCAG ok)
+            )
+            fig_sim.update_layout(
+                xaxis_title="Variables",
+                yaxis_title="Impact SHAP (simulation)",
+                xaxis_tickangle=-45,
+            )
+            st.plotly_chart(fig_sim, use_container_width=True)
+
+            a11y_small(
+                "Les barres indiquent les variables qui ont le plus influencé la décision simulée : "
+                "les valeurs positives augmentent le risque estimé, les valeurs négatives le diminuent."
+            )
+        else:
+            st.info("Aucune importance locale disponible pour cette simulation.")

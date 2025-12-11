@@ -27,25 +27,63 @@ def plot_client_vs_population(df: pd.DataFrame, client_row: pd.Series, feature: 
     )
     return fig
 
-def plot_bivariate(df: pd.DataFrame, feature_x: str, feature_y: str, color: str | None = None):
+def plot_bivariate(df, feature_x, feature_y, color=None, client_row=None):
     """
-    Nuage de points pour analyse bi-variée entre deux variables.
+    Nuage de points bi-varié :
+    - clipping au 1er–99e percentile
+    - coloration optionnelle
+    - croix rouge au-dessus pour le client sélectionné
     """
+
+    # --- 1) Sélection des colonnes (sans doublons) ---
+    cols = [feature_x, feature_y]
+    if color is not None:
+        cols.append(color)
+
+    cols = list(dict.fromkeys(cols))   # supprime les doublons proprement
+
+    df_plot = df[cols].dropna()
+
+    # --- 2) Clipping percentile ---
+    x1, x99 = np.nanpercentile(df_plot[feature_x].astype(float), [1, 99])
+    y1, y99 = np.nanpercentile(df_plot[feature_y].astype(float), [1, 99])
+
+    df_plot = df_plot[
+        df_plot[feature_x].astype(float).between(x1, x99)
+        & df_plot[feature_y].astype(float).between(y1, y99)
+    ]
+
+    # --- 3) Nuage de points ---
     fig = px.scatter(
-        df,
+        df_plot,
         x=feature_x,
         y=feature_y,
-        color=color
+        color=color if color else None,
+        opacity=0.6,
+        height=500,
     )
-    fig.update_layout(
-        title=f"Analyse bi-variée : {feature_x} vs {feature_y}",
-        xaxis_title=feature_x,
-        yaxis_title=feature_y
-    )
-    return fig
 
-import numpy as np
-import plotly.graph_objects as go
+    # --- 4) Ajout du client ---
+    if client_row is not None:
+        cx = float(client_row[feature_x])
+        cy = float(client_row[feature_y])
+
+        fig.add_scatter(
+            x=[cx],
+            y=[cy],
+            mode="markers",
+            name="Client sélectionné",
+            marker=dict(
+                size=18,
+                color="red",
+                symbol="x",
+                line=dict(width=3, color="black"),
+            ),
+            showlegend=True,
+        )
+
+    fig.update_layout(margin=dict(l=0, r=0, t=10, b=40))
+    return fig
 
 def make_risk_gauge(proba: float, threshold: float):
     """
