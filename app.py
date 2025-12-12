@@ -643,10 +643,12 @@ elif section == "Comparaison population":
                 # Le client est dans la zone affichée
                 fig_hist.add_vline(
                     x=x_client,
-                    line_width=2,
-                    line_color="black",
+                    line_width=3,
+                    line_color="red",
                     annotation_text="Client",
-                    annotation_position="top",
+                    annotation_position="right",
+                    annotation_font_color="red",
+                    annotation_font_size=20,
                 )
             else:
                 # Hors cadre : on ajoute une annotation au bord
@@ -670,7 +672,7 @@ elif section == "Comparaison population":
 
         a11y_small(
             f"Le graphique montre la distribution de **{feature_label(feature)}** "
-            "pour l'ensemble des clients. La ligne verticale noire indique la position du client sélectionné."
+            "pour l'ensemble des clients. La ligne verticale rouge indique la position du client sélectionné."
         )
 
         # --- Résumé statistique simple sur la distribution complète ---
