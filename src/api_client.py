@@ -21,7 +21,7 @@ def _get(endpoint: str) -> dict:
     return resp.json()
 
 # -------------------------------------------------
-# Appels dédiés à ton API de scoring
+# Appels dédiés à l'API de scoring
 # -------------------------------------------------
 
 def get_schema() -> list:
